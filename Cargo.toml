@@ -1,0 +1,6 @@
+[package]
+name = "Decrypter-for-Ockpo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]

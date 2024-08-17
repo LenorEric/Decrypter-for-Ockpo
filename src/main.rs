@@ -5,6 +5,18 @@ use std::io;
 use std::path::Path;
 use log::{info, warn, error, debug, trace};
 use env_logger;
+use base64::prelude::*;
+
+// extern crate rand;
+
+use rand::{thread_rng, Rng};
+use rand::distributions::Alphanumeric;
+
+
+mod big_json;
+
+use big_json::big_json_write::{BigJsonWrite, BracketType};
+
 
 const MAX_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 const DECRYPT_EXTENSION: &str = "ohqrughfubsw";
@@ -12,6 +24,14 @@ const DECRYPT_FIXX: &str = "000";
 const FAKE_ENCRYPTED_HEADER: [u8; 16] = [0x62, 0x14, 0x23, 0x64, 0x3f, 0x00, 0x13, 0x01,
     0x0d, 0x0a, 0x0d, 0x0a, 0x0d, 0x0a, 0x0d, 0x0a];
 
+
+fn ran_str(length: usize) -> String {
+    let mut rng = thread_rng();
+    let random_string: String = (0..length)
+        .map(|_| rng.sample(Alphanumeric) as char)
+        .collect();
+    random_string
+}
 
 fn add_header(dest: &str) -> std::io::Result<()> {
     let file_open = fs::OpenOptions::new().write(true).create(true).open(dest);
@@ -63,19 +83,19 @@ fn save_as(src: &str, dest: &str) -> std::io::Result<()> {
     }
 }
 
-fn is_encrypted(src: &str) -> bool {
-    let file_open = fs::File::open(src);
-    if let Ok(mut read_stream) = file_open {
-        let mut buffer = [0u8; 4];
-        let bytes_read = read_stream.read(&mut buffer).unwrap();
-        if bytes_read == 4 {
-            if buffer == [0x62, 0x14, 0x23, 0x65] || buffer == [0x77, 0x14, 0x23, 0x65] {
-                return true;
-            }
-        }
-    }
-    false
-}
+// fn is_encrypted(src: &str) -> bool {
+//     let file_open = fs::File::open(src);
+//     if let Ok(mut read_stream) = file_open {
+//         let mut buffer = [0u8; 4];
+//         let bytes_read = read_stream.read(&mut buffer).unwrap();
+//         if bytes_read == 4 {
+//             if buffer == [0x62, 0x14, 0x23, 0x65] || buffer == [0x77, 0x14, 0x23, 0x65] {
+//                 return true;
+//             }
+//         }
+//     }
+//     false
+// }
 
 
 fn has_file_with_extension(dir: &Path, extension: &str) -> io::Result<bool> {
@@ -223,6 +243,38 @@ fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
     Ok(())
 }
 
+fn recursive_decrypt(father_path: Box<Path>, json_cache: &mut BigJsonWrite) -> io::Result<()> {
+    for entry in fs::read_dir(father_path)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            info!("File: {:?}", path);
+            json_cache.push(&BracketType::Dict);
+            json_cache.add_short_content("\"type\": \"file\"");
+            
+        } else if path.is_dir() {
+            info!("Dir: {:?}", path);
+            recursive_decrypt(Box::from(path), json_cache).expect("recurse failed");
+        }
+    }
+    Ok(())
+}
+
+fn decrypt_mode() -> io::Result<()> {
+    let current_dir = env::current_dir()?;
+    println!("Current directory: {:?}", current_dir);
+    let mut target = current_dir.clone();
+    target.push(ran_str(16).as_str());
+    let mut obj_json = BigJsonWrite::new(
+        &target.with_extension(DECRYPT_EXTENSION)
+    );
+    obj_json.init();
+    obj_json.push(&BracketType::List);
+    recursive_decrypt(Box::from(current_dir), &obj_json)?;
+    obj_json.pop();
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
     env_logger::init();
 
@@ -238,6 +290,7 @@ fn main() -> io::Result<()> {
         println!("Found decrypted file, entering unpack mode.");
     } else {
         println!("Entering decrypt mode.");
+        decrypt_mode()?;
     }
     Ok(())
 }

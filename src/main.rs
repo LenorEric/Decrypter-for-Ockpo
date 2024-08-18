@@ -19,6 +19,8 @@ use big_json::big_json_write::{BigJsonWrite, BracketType};
 
 
 const MAX_BUFFER_SIZE: usize = 8 * 1024 * 1024;
+/// base64 set 3 bytes as a group
+const B64_BUFFER_SIZE: usize = MAX_BUFFER_SIZE / 3 * 3;
 const DECRYPT_EXTENSION: &str = "ohqrughfubsw";
 const DECRYPT_FIXX: &str = "000";
 const FAKE_ENCRYPTED_HEADER: [u8; 16] = [0x62, 0x14, 0x23, 0x64, 0x3f, 0x00, 0x13, 0x01,
@@ -33,17 +35,17 @@ fn ran_str(length: usize) -> String {
     random_string
 }
 
-fn add_header(dest: &str) -> std::io::Result<()> {
+fn add_header(dest: &str) -> io::Result<()> {
     let file_open = fs::OpenOptions::new().write(true).create(true).open(dest);
     if let Ok(mut write_stream) = file_open {
         write_stream.write(&FAKE_ENCRYPTED_HEADER)?;
         Ok(())
     } else {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "Error occurred when opening write file."))
+        Err(io::Error::new(io::ErrorKind::Other, "Error occurred when opening write file."))
     }
 }
 
-fn safe_delete(src: &str) -> std::io::Result<()> {
+fn safe_delete(src: &str) -> io::Result<()> {
     if Path::new(src).exists() {
         match fs::remove_file(src) {
             Ok(_) => debug!("File '{}' deleted successfully.", src),
@@ -55,11 +57,21 @@ fn safe_delete(src: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-fn save_as(src: &str, dest: &str) -> std::io::Result<()> {
+fn append_to_file(dest: &str, content: &str) -> io::Result<()> {
+    let file_open = fs::OpenOptions::new().append(true).create(true).open(dest);
+    if let Ok(mut write_stream) = file_open {
+        write_stream.write(content.as_bytes())?;
+        Ok(())
+    } else {
+        Err(io::Error::new(io::ErrorKind::Other, "Error occurred when opening write file."))
+    }
+}
+
+fn save_as(src: &str, dest: &str, base64: &bool) -> io::Result<()> {
     let metadata = metadata(src)?;
     let mut buffer_size: usize = metadata.len() as usize;
-    if buffer_size > MAX_BUFFER_SIZE {
-        buffer_size = MAX_BUFFER_SIZE;
+    if buffer_size > if *base64 { B64_BUFFER_SIZE } else { MAX_BUFFER_SIZE } {
+        buffer_size = if *base64 { B64_BUFFER_SIZE } else { MAX_BUFFER_SIZE };
     }
     let file_open = fs::File::open(src);
     if let Ok(mut read_stream) = file_open {
@@ -70,16 +82,25 @@ fn save_as(src: &str, dest: &str) -> std::io::Result<()> {
             loop {
                 let bytes_read = read_stream.read(&mut buffer)?;
                 if bytes_read == 0 {
+                    if *base64 {
+                        write_stream.write("\r\n".as_bytes())?;
+                    }
                     debug!("End of file. {}", src);
                     break Ok(());
                 }
-                write_stream.write(&buffer[..bytes_read])?;
+                if *base64 {
+                    // let encoded: Vec<u8> = BASE64_STANDARD.encode(&buffer[..bytes_read]).into_bytes();
+                    let encoded = BASE64_STANDARD.encode(&buffer[..bytes_read]).into_bytes();
+                    write_stream.write(&encoded)?;
+                } else {
+                    write_stream.write(&buffer[..bytes_read])?;
+                }
             }
         } else {
-            Err(std::io::Error::new(std::io::ErrorKind::Other, "Error occurred when opening write file."))
+            Err(io::Error::new(io::ErrorKind::Other, "Error occurred when opening write file."))
         }
     } else {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "Error occurred when opening read file."))
+        Err(io::Error::new(io::ErrorKind::Other, "Error occurred when opening read file."))
     }
 }
 
@@ -102,7 +123,6 @@ fn has_file_with_extension(dir: &Path, extension: &str) -> io::Result<bool> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-
         // 检查是否为文件，并且后缀名与给定的后缀名匹配
         if path.is_file() {
             if let Some(ext) = path.extension() {
@@ -113,6 +133,21 @@ fn has_file_with_extension(dir: &Path, extension: &str) -> io::Result<bool> {
         }
     }
     Ok(false)
+}
+
+fn find_file_with_extension(dir: &Path, extension: &str) -> io::Result<Option<String>> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(ext) = path.extension() {
+                if ext == extension {
+                    return Ok(Some(path.to_string_lossy().into_owned()));
+                }
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn rename_file(src: &str, dest: &str) -> io::Result<()> {
@@ -192,7 +227,7 @@ fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
             DecryptMode::FileNameSuffix => {
                 let dest_file_path = format!("{}.{}", &target, DECRYPT_FIXX);
                 safe_delete(&dest_file_path)?;
-                save_as(&*c_file_name, &*dest_file_path)?;
+                save_as(&*c_file_name, &*dest_file_path, &false)?;
             }
             DecryptMode::FileNamePrefix => {
                 let target_file_path = Path::new(target);
@@ -208,7 +243,7 @@ fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
                         _dest_file_path.to_string_lossy().into_owned()
                     };
                 safe_delete(&dest_file_path)?;
-                save_as(&*c_file_name, &*dest_file_path)?;
+                save_as(&*c_file_name, &*dest_file_path, &false)?;
             }
             DecryptMode::FileNameSuffixAndPrefix => {
                 let target_file_path = Path::new(target);
@@ -224,18 +259,18 @@ fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
                         _dest_file_path.to_string_lossy().into_owned()
                     };
                 safe_delete(&dest_file_path)?;
-                save_as(&*c_file_name, &*dest_file_path)?;
+                save_as(&*c_file_name, &*dest_file_path, &false)?;
             }
             DecryptMode::FileHeader => {
                 let dest_file_path = target.clone();
                 safe_delete(&dest_file_path)?;
                 add_header(&dest_file_path)?;
-                save_as(&*c_file_name, &*dest_file_path)?;
+                save_as(&*c_file_name, &*dest_file_path, &false)?;
             }
             DecryptMode::Raw => {
                 let dest_file_path = target.clone();
                 safe_delete(&dest_file_path)?;
-                save_as(&*c_file_name, &*dest_file_path)?;
+                save_as(&*c_file_name, &*dest_file_path, &false)?;
             }
         }
         safe_delete(&c_file_name)?;
@@ -243,18 +278,57 @@ fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
     Ok(())
 }
 
-fn recursive_decrypt(father_path: Box<Path>, json_cache: &mut BigJsonWrite) -> io::Result<()> {
-    for entry in fs::read_dir(father_path)? {
+// fn recursive_decrypt(father_path: Box<Path>, json_cache: &mut BigJsonWrite) -> io::Result<()> {
+//     for entry in fs::read_dir(father_path)? {
+//         let entry = entry?;
+//         let path = entry.path();
+//         if path.is_file() {
+//             info!("File: {:?}", path);
+//             json_cache.push(&BracketType::Dict);
+//             json_cache.add_short_content("\"type\": \"file\",");
+//
+//
+//         } else if path.is_dir() {
+//             info!("Dir: {:?}", path);
+//             recursive_decrypt(Box::from(path), json_cache).expect("recurse failed");
+//         }
+//     }
+//     Ok(())
+// }
+//
+// fn decrypt_mode() -> io::Result<()> {
+//     let current_dir = env::current_dir()?;
+//     println!("Current directory: {:?}", current_dir);
+//     let mut target = current_dir.clone();
+//     target.push(ran_str(16).as_str());
+//     let mut obj_json = BigJsonWrite::new(
+//         &target.with_extension(DECRYPT_EXTENSION)
+//     );
+//     obj_json.init();
+//     obj_json.push(&BracketType::List);
+//     recursive_decrypt(Box::from(current_dir), &obj_json)?;
+//     obj_json.pop();
+//     Ok(())
+// }
+
+fn recursive_decrypt(father_path: &Box<Path>, proc_path: &Box<Path>, target: &Box<Path>) -> io::Result<()> {
+    let current_exe_path = env::current_exe()?;
+    for entry in fs::read_dir(proc_path)? {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() {
             info!("File: {:?}", path);
-            json_cache.push(&BracketType::Dict);
-            json_cache.add_short_content("\"type\": \"file\"");
-            
+            let rev_path = path.strip_prefix(father_path).unwrap();
+            let can_path = fs::canonicalize(&rev_path)?;
+            if can_path == current_exe_path {
+                continue;
+            }
+            append_to_file(&*target.to_string_lossy(),
+                           &(BASE64_STANDARD.encode(&*rev_path.to_string_lossy()) + "\r\n"))?;
+            save_as(&path.to_string_lossy(), &target.to_string_lossy(), &true)?;
         } else if path.is_dir() {
             info!("Dir: {:?}", path);
-            recursive_decrypt(Box::from(path), json_cache).expect("recurse failed");
+            recursive_decrypt(father_path, &Box::from(path.clone()), target)?
         }
     }
     Ok(())
@@ -265,13 +339,17 @@ fn decrypt_mode() -> io::Result<()> {
     println!("Current directory: {:?}", current_dir);
     let mut target = current_dir.clone();
     target.push(ran_str(16).as_str());
-    let mut obj_json = BigJsonWrite::new(
-        &target.with_extension(DECRYPT_EXTENSION)
-    );
-    obj_json.init();
-    obj_json.push(&BracketType::List);
-    recursive_decrypt(Box::from(current_dir), &obj_json)?;
-    obj_json.pop();
+    target.set_extension(DECRYPT_EXTENSION);
+    recursive_decrypt(&Box::from(current_dir.clone()), &Box::from(current_dir.clone()), &Box::from(target.clone()))?;
+    Ok(())
+}
+
+fn unpack_mode() -> io::Result<()> {
+    let current_dir = env::current_dir()?;
+    let target = find_file_with_extension(&current_dir, DECRYPT_EXTENSION)?;
+    println!("Unpacking: {:?}", target);
+    let file_open = fs::File::open(src);
+    if let Ok(mut read_stream) = file_open {}
     Ok(())
 }
 
@@ -288,6 +366,7 @@ fn main() -> io::Result<()> {
     info!("Current directory: {:?}", current_dir);
     if has_file_with_extension(&current_dir, DECRYPT_EXTENSION)? {
         println!("Found decrypted file, entering unpack mode.");
+        unpack_mode()?;
     } else {
         println!("Entering decrypt mode.");
         decrypt_mode()?;

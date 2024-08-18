@@ -23,7 +23,7 @@ use big_json::big_json_write::{BigJsonWrite, BracketType};
 const MAX_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 /// base64 set 3 bytes as a group
 const B64_BUFFER_SIZE: usize = MAX_BUFFER_SIZE / 3 * 3;
-const READ_BUFFER_SIZE: usize = 128 * 1024;
+const READ_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 const RB64_BUFFER_SIZE: usize = READ_BUFFER_SIZE / 4 / 4 * 4;
 
 const DECRYPT_EXT_SUFIXX: &str = "ohqrughfubsw";
@@ -338,6 +338,7 @@ fn recursive_decrypt(father_path: &Box<Path>, proc_path: &Box<Path>, target: &Bo
             if are_same_file(current_exe_path.to_str().unwrap(), path.to_str().unwrap())? {
                 continue;
             }
+            println!("Packing: {:?}", path);
             append_to_file(&*target.to_string_lossy(),
                            &(BASE64_STANDARD.encode(&*rev_path.to_string_lossy()) + "$"))?;
             save_as(&path.to_string_lossy(), &target.to_string_lossy(), &true)?;

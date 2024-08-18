@@ -1,7 +1,9 @@
 use std::{env, fs};
+use std::collections::VecDeque;
 use std::fs::metadata;
 use std::io::prelude::*;
 use std::io;
+use std::str;
 use std::path::Path;
 use log::{info, warn, error, debug, trace};
 use env_logger;
@@ -21,7 +23,10 @@ use big_json::big_json_write::{BigJsonWrite, BracketType};
 const MAX_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 /// base64 set 3 bytes as a group
 const B64_BUFFER_SIZE: usize = MAX_BUFFER_SIZE / 3 * 3;
-const DECRYPT_EXTENSION: &str = "ohqrughfubsw";
+const READ_BUFFER_SIZE: usize = 128 * 1024;
+const RB64_BUFFER_SIZE: usize = READ_BUFFER_SIZE / 4 / 4 * 4;
+
+const DECRYPT_EXT_SUFIXX: &str = "ohqrughfubsw";
 const DECRYPT_FIXX: &str = "000";
 const FAKE_ENCRYPTED_HEADER: [u8; 16] = [0x62, 0x14, 0x23, 0x64, 0x3f, 0x00, 0x13, 0x01,
     0x0d, 0x0a, 0x0d, 0x0a, 0x0d, 0x0a, 0x0d, 0x0a];
@@ -36,12 +41,15 @@ fn ran_str(length: usize) -> String {
 }
 
 fn add_header(dest: &str) -> io::Result<()> {
+    if let Some(parent_dir) = Path::new(dest).parent() {
+        fs::create_dir_all(parent_dir)?;
+    }
     let file_open = fs::OpenOptions::new().write(true).create(true).open(dest);
     if let Ok(mut write_stream) = file_open {
         write_stream.write(&FAKE_ENCRYPTED_HEADER)?;
         Ok(())
     } else {
-        Err(io::Error::new(io::ErrorKind::Other, "Error occurred when opening write file."))
+        Err(io::Error::new(io::ErrorKind::Other, "Error occurred when adding header."))
     }
 }
 
@@ -83,7 +91,7 @@ fn save_as(src: &str, dest: &str, base64: &bool) -> io::Result<()> {
                 let bytes_read = read_stream.read(&mut buffer)?;
                 if bytes_read == 0 {
                     if *base64 {
-                        write_stream.write("\r\n".as_bytes())?;
+                        write_stream.write("$".as_bytes())?;
                     }
                     debug!("End of file. {}", src);
                     break Ok(());
@@ -135,19 +143,19 @@ fn has_file_with_extension(dir: &Path, extension: &str) -> io::Result<bool> {
     Ok(false)
 }
 
-fn find_file_with_extension(dir: &Path, extension: &str) -> io::Result<Option<String>> {
+fn find_file_with_extension(dir: &Path, extension: &str) -> io::Result<String> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.is_file() {
             if let Some(ext) = path.extension() {
                 if ext == extension {
-                    return Ok(Some(path.to_string_lossy().into_owned()));
+                    return Ok(Some(path.to_string_lossy().into_owned()).unwrap());
                 }
             }
         }
     }
-    Ok(None)
+    Ok("".parse().unwrap())
 }
 
 fn rename_file(src: &str, dest: &str) -> io::Result<()> {
@@ -311,6 +319,14 @@ fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
 //     Ok(())
 // }
 
+fn are_same_file(path1: &str, path2: &str) -> io::Result<bool> {
+    let canonical_path1 = fs::canonicalize(path1)?;
+    let canonical_path2 = fs::canonicalize(path2)?;
+    // println!("Canonical path1: {:?}", canonical_path1);
+    // println!("Canonical path2: {:?}", canonical_path2);
+    Ok(canonical_path1 == canonical_path2)
+}
+
 fn recursive_decrypt(father_path: &Box<Path>, proc_path: &Box<Path>, target: &Box<Path>) -> io::Result<()> {
     let current_exe_path = env::current_exe()?;
     for entry in fs::read_dir(proc_path)? {
@@ -319,12 +335,11 @@ fn recursive_decrypt(father_path: &Box<Path>, proc_path: &Box<Path>, target: &Bo
         if path.is_file() {
             info!("File: {:?}", path);
             let rev_path = path.strip_prefix(father_path).unwrap();
-            let can_path = fs::canonicalize(&rev_path)?;
-            if can_path == current_exe_path {
+            if are_same_file(current_exe_path.to_str().unwrap(), path.to_str().unwrap())? {
                 continue;
             }
             append_to_file(&*target.to_string_lossy(),
-                           &(BASE64_STANDARD.encode(&*rev_path.to_string_lossy()) + "\r\n"))?;
+                           &(BASE64_STANDARD.encode(&*rev_path.to_string_lossy()) + "$"))?;
             save_as(&path.to_string_lossy(), &target.to_string_lossy(), &true)?;
         } else if path.is_dir() {
             info!("Dir: {:?}", path);
@@ -339,17 +354,105 @@ fn decrypt_mode() -> io::Result<()> {
     println!("Current directory: {:?}", current_dir);
     let mut target = current_dir.clone();
     target.push(ran_str(16).as_str());
-    target.set_extension(DECRYPT_EXTENSION);
+    target.set_extension(DECRYPT_EXT_SUFIXX);
     recursive_decrypt(&Box::from(current_dir.clone()), &Box::from(current_dir.clone()), &Box::from(target.clone()))?;
     Ok(())
 }
 
+enum CurrentReading {
+    Path,
+    Content,
+}
+
 fn unpack_mode() -> io::Result<()> {
+    fn dump_content(file_path: &str, file_content: &Vec<u8>) -> io::Result<()> {
+        let file_content = BASE64_STANDARD.decode(&file_content).unwrap();
+        if let Some(parent_dir) = Path::new(file_path).parent() {
+            fs::create_dir_all(parent_dir)?;
+        }
+        if let Ok(mut write_stream) =
+            fs::OpenOptions::new().append(true).create(true)
+                .open(file_path) {
+            write_stream.write(&file_content)?;
+        }
+        Ok(())
+    }
+
+    let mode = ask_decrypt_mode();
+    match mode {
+        DecryptMode::FileNameSuffix => {
+            println!("Unsupported currently");
+            return Ok(());
+        }
+        DecryptMode::FileNamePrefix => {
+            println!("Unsupported currently");
+            return Ok(());
+        }
+        DecryptMode::FileNameSuffixAndPrefix => {
+            println!("Unsupported currently");
+            return Ok(());
+        }
+        _ => {}
+    }
+
     let current_dir = env::current_dir()?;
-    let target = find_file_with_extension(&current_dir, DECRYPT_EXTENSION)?;
+    let target = find_file_with_extension(&current_dir, DECRYPT_EXT_SUFIXX)?;
     println!("Unpacking: {:?}", target);
-    let file_open = fs::File::open(src);
-    if let Ok(mut read_stream) = file_open {}
+    let file_open = fs::File::open(&target);
+    let mut file_path: Vec<u8> = Vec::new();
+    let mut file_content: Vec<u8> = Vec::new();
+    let mut current_reading = CurrentReading::Path;
+    if let Ok(mut read_stream) = file_open {
+        let mut buffer = vec![0u8; READ_BUFFER_SIZE];
+        let mut proc: VecDeque<u8> = VecDeque::new();
+        loop {
+            let bytes_read = read_stream.read(&mut buffer)?;
+            if bytes_read == 0 {
+                debug!("End of file. {}", target);
+                break;
+            }
+            proc.extend(&buffer[..bytes_read]);
+            while !proc.is_empty() {
+                match current_reading {
+                    CurrentReading::Path => {
+                        let this_byte = proc.pop_front().unwrap();
+                        if this_byte == '$' as u8 {
+                            current_reading = CurrentReading::Content;
+                            file_path = BASE64_STANDARD.decode(&file_path).unwrap();
+                            let mut dec_head = "dec".to_owned() + DECRYPT_EXT_SUFIXX + "\\";
+                            let mut dec_head: Vec<u8> = dec_head.as_bytes().to_vec();
+                            dec_head.append(&mut file_path);
+                            file_path = dec_head;
+                            match mode {
+                                DecryptMode::FileHeader => {
+                                    add_header(str::from_utf8(&file_path).unwrap())?;
+                                }
+                                _ => {}
+                            }
+                            println!("Unpacking: {:?}", String::from_utf8(file_path.clone()).unwrap());
+                        } else {
+                            file_path.push(this_byte);
+                        }
+                    }
+                    CurrentReading::Content => {
+                        let this_byte = proc.pop_front().unwrap();
+                        if this_byte == '$' as u8 {
+                            dump_content(str::from_utf8(&file_path).unwrap(), &file_content)?;
+                            file_content.clear();
+                            file_path.clear();
+                            current_reading = CurrentReading::Path;
+                        } else {
+                            file_content.push(this_byte);
+                            if file_content.len() >= RB64_BUFFER_SIZE {
+                                dump_content(str::from_utf8(&file_path).unwrap(), &file_content)?;
+                                file_content.clear();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -364,7 +467,7 @@ fn main() -> io::Result<()> {
     }
     let current_dir = env::current_dir()?;
     info!("Current directory: {:?}", current_dir);
-    if has_file_with_extension(&current_dir, DECRYPT_EXTENSION)? {
+    if has_file_with_extension(&current_dir, DECRYPT_EXT_SUFIXX)? {
         println!("Found decrypted file, entering unpack mode.");
         unpack_mode()?;
     } else {

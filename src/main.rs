@@ -86,7 +86,7 @@ fn save_as(src: &str, dest: &str, base64: &bool) -> io::Result<()> {
         if let Ok(mut write_stream) = fs::OpenOptions::new().append(true).create(true).open(dest)
         {
             let mut buffer = vec![0u8; buffer_size];
-            let mut count = 0;
+            // let mut count = 0;
             loop {
                 let bytes_read = read_stream.read(&mut buffer)?;
                 if bytes_read == 0 {
@@ -96,10 +96,10 @@ fn save_as(src: &str, dest: &str, base64: &bool) -> io::Result<()> {
                     debug!("End of file. {}", src);
                     break Ok(());
                 }
-                if count == 0{
-                    println!("{:?}", &buffer[..32]);
-                    count += 1;
-                }
+                // if count == 0{
+                //     println!("{:?}", &buffer[..32]);
+                //     count += 1;
+                // }
                 if *base64 {
                     // let encoded: Vec<u8> = BASE64_STANDARD.encode(&buffer[..bytes_read]).into_bytes();
                     let encoded = BASE64_STANDARD.encode(&buffer[..bytes_read]).into_bytes();
@@ -172,7 +172,7 @@ fn copy_file(src: &str, dest: &str) -> io::Result<()> {
     safe_delete(&dest)?;
     debug!("Copying file from {} to {}", src, dest);
     // fs::copy(src, dest).expect("Copy failed");
-    /** 
+    /**
     ***   use external copy, don't know why
     ***   guess that internal copy may not close file properly
     ***   or the delay is too short to get re-hooked.

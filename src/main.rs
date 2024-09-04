@@ -8,9 +8,8 @@ use std::path::Path;
 use log::{info, warn, error, debug, trace};
 use env_logger;
 use base64::prelude::*;
-
+use std::process::Command;
 // extern crate rand;
-
 use rand::{thread_rng, Rng};
 use rand::distributions::Alphanumeric;
 
@@ -87,6 +86,7 @@ fn save_as(src: &str, dest: &str, base64: &bool) -> io::Result<()> {
         if let Ok(mut write_stream) = fs::OpenOptions::new().append(true).create(true).open(dest)
         {
             let mut buffer = vec![0u8; buffer_size];
+            // let mut count = 0;
             loop {
                 let bytes_read = read_stream.read(&mut buffer)?;
                 if bytes_read == 0 {
@@ -96,6 +96,10 @@ fn save_as(src: &str, dest: &str, base64: &bool) -> io::Result<()> {
                     debug!("End of file. {}", src);
                     break Ok(());
                 }
+                // if count == 0{
+                //     println!("{:?}", &buffer[..32]);
+                //     count += 1;
+                // }
                 if *base64 {
                     // let encoded: Vec<u8> = BASE64_STANDARD.encode(&buffer[..bytes_read]).into_bytes();
                     let encoded = BASE64_STANDARD.encode(&buffer[..bytes_read]).into_bytes();
@@ -167,7 +171,15 @@ fn rename_file(src: &str, dest: &str) -> io::Result<()> {
 fn copy_file(src: &str, dest: &str) -> io::Result<()> {
     safe_delete(&dest)?;
     debug!("Copying file from {} to {}", src, dest);
-    fs::copy(src, dest).expect("Copy failed");
+    // fs::copy(src, dest).expect("Copy failed");
+    /**
+    ***   use external copy, don't know why
+    ***   guess that internal copy may not close file properly
+    ***   or the delay is too short to get re-hooked.
+    **/
+    let cmd_str = format!("copy {} {}", src, dest).to_string();
+    println!("cmd_str: {}", cmd_str);
+    Command::new("cmd").arg("/c").arg(cmd_str).output().expect("cmd exec error!");
     Ok(())
 }
 
@@ -180,7 +192,7 @@ fn rename_file_to_c(src: &str) -> io::Result<(String)> {
 fn copy_file_to_c(src: &str) -> io::Result<(String)> {
     let dest = format!("{}.c", src);
     copy_file(src, &dest).expect("Copy failed.");
-    Ok(dest)
+    Ok(dest.clone())
 }
 
 enum DecryptMode {

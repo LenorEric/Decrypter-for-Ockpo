@@ -341,7 +341,9 @@ fn recursive_decrypt(father_path: &Box<Path>, proc_path: &Box<Path>, target: &Bo
             println!("Packing: {:?}", path);
             append_to_file(&*target.to_string_lossy(),
                            &(BASE64_STANDARD.encode(&*rev_path.to_string_lossy()) + "$"))?;
-            save_as(&path.to_string_lossy(), &target.to_string_lossy(), &true)?;
+            let c_file_name = copy_file_to_c(path.to_str().unwrap())?;
+            save_as(&*c_file_name, &target.to_string_lossy(), &true)?;
+            safe_delete(&c_file_name)?;
         } else if path.is_dir() {
             info!("Dir: {:?}", path);
             recursive_decrypt(father_path, &Box::from(path.clone()), target)?

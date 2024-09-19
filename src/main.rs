@@ -177,8 +177,8 @@ fn copy_file(src: &str, dest: &str) -> io::Result<()> {
     ***   guess that internal copy may not close file properly
     ***   or the delay is too short to get re-hooked.
     **/
-    let cmd_str = format!("copy {} {}", src, dest).to_string();
-    println!("cmd_str: {}", cmd_str);
+    let cmd_str = format!("copy \"{}\" \"{}\"", src, dest).to_string();
+    // println!("cmd_str: {}", cmd_str);
     Command::new("cmd").arg("/c").arg(cmd_str).output().expect("cmd exec error!");
     Ok(())
 }

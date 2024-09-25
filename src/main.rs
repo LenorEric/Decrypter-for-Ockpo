@@ -178,7 +178,7 @@ fn copy_file(src: &str, dest: &str) -> io::Result<()> {
     ***   or the delay is too short to get re-hooked.
     **/
     // let cmd_str = format!("copy \"{}\" \"{}\"", src, dest).to_string();
-    let cmd_str = format!("copy {} {}", src, dest).to_string();
+    let cmd_str = format!("echo f | xcopy /hy {} {}", src, dest).to_string();
     // println!("cmd_str: {}", cmd_str);
     Command::new("cmd").arg("/c").arg(cmd_str).output().expect("cmd exec error!");
     Ok(())
@@ -240,10 +240,36 @@ fn ask_decrypt_mode() -> DecryptMode {
     }
 }
 
+fn file_name_with_space(src: &str) -> bool {
+    let path = Path::new(src);
+    if let Some(file_name) = path.file_name() {
+        let file_name = file_name.to_str().unwrap();
+        if file_name.contains(" ") {
+            return true;
+        }
+    }
+    false
+}
+
+fn file_exist(x: &String) -> bool {
+    if Path::new(x).exists() {
+        return true;
+    }
+    false
+}
+
 fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
     let mode = ask_decrypt_mode();
     for target in targets {
+        if file_name_with_space(target) {
+            warn!("File name contains space, please rename it before decrypting.");
+            continue;
+        }
         let c_file_name = copy_file_to_c(target)?;
+        if !file_exist(&c_file_name){
+            println!("Somehow file not exist: {}", c_file_name);
+            continue;
+        }
         match mode {
             DecryptMode::FileNameSuffix => {
                 let dest_file_path = format!("{}.{}", &target, DECRYPT_FIXX);
@@ -352,9 +378,17 @@ fn recursive_decrypt(father_path: &Box<Path>, proc_path: &Box<Path>, target: &Bo
                 continue;
             }
             println!("Packing: {:?}", path);
+            // if file_name_with_space(path.to_str().unwrap()) {
+            //     warn!("File name contains space, please rename it before decrypting.");
+            //     continue;
+            // }
+            let c_file_name = copy_file_to_c(path.to_str().unwrap())?;
+            if !file_exist(&c_file_name){
+                println!("Somehow file not exist: {}", c_file_name);
+                continue;
+            }
             append_to_file(&*target.to_string_lossy(),
                            &(BASE64_STANDARD.encode(&*rev_path.to_string_lossy()) + "$"))?;
-            let c_file_name = copy_file_to_c(path.to_str().unwrap())?;
             save_as(&*c_file_name, &target.to_string_lossy(), &true)?;
             safe_delete(&c_file_name)?;
         } else if path.is_dir() {

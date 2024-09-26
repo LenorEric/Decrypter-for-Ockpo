@@ -27,7 +27,7 @@ const RB64_BUFFER_SIZE: usize = READ_BUFFER_SIZE / 4 / 4 * 4;
 
 const DECRYPT_EXT_SUFIXX: &str = "ohqrughfubsw";
 const DECRYPT_FIXX: &str = "000";
-const FAKE_ENCRYPTED_HEADER: [u8; 16] = [0x62, 0x14, 0x23, 0x64, 0x3f, 0x00, 0x13, 0x01,
+const FAKE_ENCRYPTED_HEADER: [u8; 16] = [0x62, 0x14, 0x23, 0x65, 0x3f, 0x00, 0x13, 0x01,
     0x0d, 0x0a, 0x0d, 0x0a, 0x0d, 0x0a, 0x0d, 0x0a];
 
 
@@ -190,10 +190,29 @@ fn rename_file_to_c(src: &str) -> io::Result<(String)> {
     Ok(dest)
 }
 
+fn check_is_encrypted(src: &str) -> bool {
+    let file_open = fs::File::open(src);
+    if let Ok(mut read_stream) = file_open {
+        let mut buffer = [0u8; 4];
+        let bytes_read = read_stream.read(&mut buffer).unwrap();
+        if bytes_read == 4 {
+            if buffer == FAKE_ENCRYPTED_HEADER[0..4] {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn copy_file_to_c(src: &str) -> io::Result<(String)> {
-    let dest = format!("{}.c", src);
-    copy_file(src, &dest).expect("Copy failed.");
-    Ok(dest.clone())
+    if check_is_encrypted(src) {
+        let dest = format!("{}.c", src);
+        copy_file(src, &dest).expect("Copy failed.");
+        Ok(dest.clone())
+    } else {
+        let dest = src.to_owned();
+        Ok(dest.clone())
+    }
 }
 
 enum DecryptMode {
@@ -266,7 +285,7 @@ fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
             continue;
         }
         let c_file_name = copy_file_to_c(target)?;
-        if !file_exist(&c_file_name){
+        if !file_exist(&c_file_name) {
             println!("Somehow file not exist: {}", c_file_name);
             continue;
         }
@@ -320,7 +339,9 @@ fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
                 save_as(&*c_file_name, &*dest_file_path, &false)?;
             }
         }
-        safe_delete(&c_file_name)?;
+        if !are_same_file(&c_file_name.to_string(), target)?{
+            safe_delete(&c_file_name)?;
+        }
     }
     Ok(())
 }
@@ -383,14 +404,16 @@ fn recursive_decrypt(father_path: &Box<Path>, proc_path: &Box<Path>, target: &Bo
             //     continue;
             // }
             let c_file_name = copy_file_to_c(path.to_str().unwrap())?;
-            if !file_exist(&c_file_name){
+            if !file_exist(&c_file_name) {
                 println!("Somehow file not exist: {}", c_file_name);
                 continue;
             }
             append_to_file(&*target.to_string_lossy(),
                            &(BASE64_STANDARD.encode(&*rev_path.to_string_lossy()) + "$"))?;
             save_as(&*c_file_name, &target.to_string_lossy(), &true)?;
-            safe_delete(&c_file_name)?;
+            if c_file_name != path.to_str().unwrap(){
+                safe_delete(&c_file_name)?;
+            }
         } else if path.is_dir() {
             info!("Dir: {:?}", path);
             recursive_decrypt(father_path, &Box::from(path.clone()), target)?

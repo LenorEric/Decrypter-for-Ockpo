@@ -17,7 +17,6 @@ use rand::distributions::Alphanumeric;
 mod big_json;
 
 
-
 const MAX_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 /// base64 set 3 bytes as a group
 const B64_BUFFER_SIZE: usize = MAX_BUFFER_SIZE / 3 * 3;
@@ -281,7 +280,14 @@ fn file_exist(x: &String) -> bool {
 }
 
 fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
-    let mode = ask_decrypt_mode();
+    let mut targets = targets;
+    let mut mode = DecryptMode::Raw;
+    if targets[0] == "-s" {
+        mode = DecryptMode::Raw;
+        targets = &targets[1..];
+    } else {
+        mode = ask_decrypt_mode();
+    }
     for target in targets {
         if file_name_with_space(target) {
             warn!("File name contains space, please rename it before decrypting.");
@@ -345,7 +351,7 @@ fn quick_decrypt_mode(targets: &[String]) -> io::Result<()> {
                 safe_delete(&mid_file_path)?;
             }
         }
-        if !are_same_file(&c_file_name.to_string(), target)?{
+        if !are_same_file(&c_file_name.to_string(), target)? {
             safe_delete(&c_file_name)?;
         }
     }
@@ -417,7 +423,7 @@ fn recursive_decrypt(father_path: &Box<Path>, proc_path: &Box<Path>, target: &Bo
             append_to_file(&*target.to_string_lossy(),
                            &(BASE64_STANDARD.encode(&*rev_path.to_string_lossy()) + "$"))?;
             save_as(&*c_file_name, &target.to_string_lossy(), &true)?;
-            if c_file_name != path.to_str().unwrap(){
+            if c_file_name != path.to_str().unwrap() {
                 safe_delete(&c_file_name)?;
             }
         } else if path.is_dir() {
